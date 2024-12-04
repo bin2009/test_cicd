@@ -33,7 +33,7 @@ jobs:
 
             - name: Copy files to Droplet
               run: |
-                  rsync -avz --delete-after --exclude='.git' ./build/ ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }}:/root/demo/
+                  rsync -avz --delete-after --exclude='.git' ./build/src ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }}:/root/demo/
 
             - name: Install dependencies on Droplet
               run: |
