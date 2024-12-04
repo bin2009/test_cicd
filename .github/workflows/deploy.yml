@@ -30,7 +30,8 @@ jobs:
                       cd /root/demo/test_cicd  
                       git pull origin main 
                       npm run build
-
-
-                      npm install  # Cài đặt phụ thuộc
-                      pm2 restart all || pm2 start ecosystem.config.js
+                      cp package.json /root/build/
+                      npm install
+                      pm2 stop all
+                      pm2 delete all
+                      pm2 start /root/build/src/server.js
