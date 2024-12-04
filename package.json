@@ -6,7 +6,7 @@
     "scripts": {
         "clean": "rimraf build && mkdir build",
         "build-babel": "babel ./src -d ./build/src",
-        "copy-config": "cp ./config.json ./build/src/config/config.json",
+        "copy-config": "cp ./src/config/config.json ./build/src/config/config.json",
         "build": "npm run clean && npm run build-babel && npm run copy-config",
         "production": "npm run build && cross-env BUILD_MODE=production node ./build/src/server.js",
         "dev": "cross-env BUILD_MODE=dev nodemon --exec babel-node ./src/server.js",
