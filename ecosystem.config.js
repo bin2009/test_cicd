@@ -16,3 +16,17 @@
 //         },
 //     ],
 // };
+
+module.exports = {
+    apps: [
+        {
+            name: 'melodies',
+            script: 'babel-node',
+            args: './src/server.js',
+            watch: true,
+            env: {
+                BUILD_MODE: 'dev',
+            },
+        },
+    ],
+};
