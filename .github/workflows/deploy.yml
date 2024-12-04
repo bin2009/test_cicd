@@ -31,6 +31,8 @@ jobs:
                       git pull origin main 
                       npm run build
                       cp package.json /root/build/
+                      cp .env /root/build/
+                      cd /root/build
                       npm install
                       pm2 stop all
                       pm2 delete all
