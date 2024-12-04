@@ -11,6 +11,7 @@ import { albumService } from './albumService';
 import { userService } from './userService';
 import { awsService } from './awsService';
 import { songService } from './songService';
+import formatTime from '~/utils/timeFormat';
 
 const saltRounds = 10;
 
@@ -147,27 +148,9 @@ const getTodayBestSongService = async () => {
             raw: true,
         });
 
-        const song = await db.Song.findOne({
-            where: { id: topSong.songId },
-            include: [
-                {
-                    model: db.Album,
-                    as: 'album',
-                    through: { attributes: [] },
-                    attributes: ['albumId', 'title', 'releaseDate', 'albumType'],
-                    include: [{ model: db.AlbumImage, as: 'albumImages', attributes: ['image', 'size'] }],
-                },
-                {
-                    model: db.Artist,
-                    as: 'artists',
-                    attributes: ['id', 'name', 'avatar'],
-                    through: { attributes: ['main'] },
-                },
-            ],
-            attributes: ['id', 'title', 'releaseDate', 'duration', 'lyric', 'filePathAudio'],
-        });
+        const song = await songService.fetchSongs({ conditions: { id: topSong.songId }, mode: 'findOne' });
 
-        const { album, artists, ...other } = song.toJSON();
+        const { album, artists, totalPlay, ...other } = song;
 
         const result = {
             ...other,
@@ -178,7 +161,7 @@ const getTodayBestSongService = async () => {
                 ...otherArtist,
                 main: ArtistSong?.main || false,
             })),
-            playCount: topSong.playCount,
+            playCount: totalPlay,
         };
 
         return {
@@ -198,7 +181,7 @@ const getAllAlbumService = async (query, order, page) => {
 
         const [totalAlbum, albums] = await Promise.all([
             albumService.fetchAlbumCount(),
-            albumService.fetchAlbumIds({ order: [['createdAt', 'DESC']] }),
+            albumService.fetchAlbum({ order: [['createdAt', 'DESC']] }),
         ]);
 
         const result = await Promise.all(
@@ -210,7 +193,7 @@ const getAllAlbumService = async (query, order, page) => {
 
                 if (!firstSongOfAlbum) {
                     return {
-                        ...album.toJSON(),
+                        ...album,
                         totalSong: 0,
                         mainArtist: null,
                     };
@@ -227,7 +210,7 @@ const getAllAlbumService = async (query, order, page) => {
                     conditions: { id: mainArtistId.artistId },
                 });
                 return {
-                    ...album.toJSON(),
+                    ...album,
                     totalSong: totalSong,
                     mainArtist: mainArtist ?? null,
                 };
@@ -274,7 +257,7 @@ const getAllUserService = async ({ page = 1, limit = 10 } = {}) => {
         ]);
 
         const result = users.map((user) => {
-            const { status2, ...other } = user.toJSON();
+            const { status2, ...other } = user;
             let statusMessage = '';
             switch (status2) {
                 case 'normal':
@@ -310,10 +293,97 @@ const getAllUserService = async ({ page = 1, limit = 10 } = {}) => {
     }
 };
 
-const createSongService = async ({ data, file, duration } = {}) => {
+const getAllReportService = async ({ page = 1, limit = 10 } = {}) => {
+    try {
+        const offset = (page - 1) * limit;
+
+        const reports = await db.Comment.findAll({
+            order: [['createdAt', 'DESC']],
+            limit: limit,
+            offset: offset,
+        });
+
+        const formatters = reports.map((r) => {
+            const formatter = { ...r.toJSON() };
+            formatter.createdAt = formatTime(formatter.createdAt);
+            formatter.updatedAt = formatTime(formatter.updatedAt);
+            return formatter;
+        });
+        return formatters;
+    } catch (error) {
+        throw error;
+    }
+};
+
+const getReportService = async (reportId) => {
+    try {
+        const report = await db.Report.findOne({
+            where: { id: reportId },
+            attributes: ['id', 'content', 'status', 'createdAt', 'updatedAt'],
+            include: [
+                { model: db.User, as: 'user', attributes: ['id', 'name', 'username', 'email', 'image', 'createdAt'] },
+                { model: db.Comment, as: 'comment' },
+            ],
+        });
+        if (!report) throw new ApiError(StatusCodes.NOT_FOUND, 'Comment not found');
+        const formatter = report.toJSON();
+        formatter.createdAt = formatTime(formatter.createdAt);
+        formatter.updatedAt = formatTime(formatter.updatedAt);
+        formatter.user.createdAt = formatTime(formatter.user.createdAt);
+        formatter.comment.createdAt = formatTime(formatter.comment.createdAt);
+        formatter.comment.updatedAt = formatTime(formatter.comment.updatedAt);
+        return formatter;
+    } catch (error) {
+        throw error;
+    }
+};
+
+const verifyReportService = async (reportId) => {
     const transaction = await db.sequelize.transaction();
-    let filePathAudio = null;
+    try {
+        const report = await db.Report.findOne({ id: reportId });
+        if (!report) throw new ApiError(StatusCodes.NOT_FOUND, 'Comment not found');
+        // await db.Report.update({ status: true }, { where: { reportId: reportId } }, { transaction });
+        // await db.Comment.update({ hide: true }, { where: { id: report.commentId } }, { transaction });
+        const [reportResult, commentResult] = await Promise.all([
+            db.Report.update({ status: true }, { where: { id: reportId } }, { transaction }),
+            db.Comment.update({ hide: true }, { where: { id: report.commentId } }, { transaction }),
+        ]);
+
+        if (reportResult[0] === 1) {
+            const userOfComment = await db.Comment.findOne({
+                where: { id: report.commentId },
+                attributes: ['userId'],
+            });
+
+            const count = await db.Comment.count({ where: { userId: userOfComment.userId, hide: true } });
+            switch (count) {
+                case 3:
+                    await db.User.update(
+                        { status2: 'lock3' },
+                        { where: { id: userOfComment.userId } },
+                        { transaction },
+                    );
+                    console.log('Message: ');
+                    // send message
+                    break;
+
+                default:
+                    break;
+            }
+        }
+        await transaction.commit();
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
+    }
+};
+
+const createSongService = async ({ data, file, lyric, duration } = {}) => {
+    const transaction = await db.sequelize.transaction();
     const songId = uuidv4();
+    let filePathAudio = null;
+    let filePathLyric = null;
 
     try {
         // check artist
@@ -328,25 +398,28 @@ const createSongService = async ({ data, file, duration } = {}) => {
             });
         }
 
-        if (file) {
-            filePathAudio = await awsService.uploadSong(data.mainArtistId, songId, file);
+        if (!file) throw new ApiError(StatusCodes.BAD_REQUEST, 'File required');
+        if (lyric) {
+            const result = await awsService.uploadSongWithLyric(songId, file, lyric);
+            console.log('result: ', result);
+            filePathAudio = result.filePathAudio;
+            filePathLyric = result.filePathLyric;
+        } else {
+            filePathAudio = await awsService.uploadSong(songId, file);
         }
 
-        // tạo song
-        const newSong = await db.Song.create(
-            {
-                id: songId,
-                title: data.title,
-                duration: duration,
-                // duration: 123,
-                filePathAudio: filePathAudio,
-                releaseDate: data.releaseDate,
-            },
-            { transaction },
-        );
-
-        // tạo artist song
         await Promise.all([
+            db.Song.create(
+                {
+                    id: songId,
+                    title: data.title,
+                    duration: duration,
+                    lyric: filePathLyric,
+                    filePathAudio: filePathAudio,
+                    releaseDate: data.releaseDate,
+                },
+                { transaction },
+            ),
             db.ArtistSong.create(
                 {
                     artistSongId: uuidv4(),
@@ -368,13 +441,12 @@ const createSongService = async ({ data, file, duration } = {}) => {
                 );
             }),
         ]);
+
         await transaction.commit();
-        return await songService.fetchSongs({ conditions: { id: newSong.id } });
     } catch (error) {
-        await transaction.rollback();
-        if (filePathAudio) {
-            await awsService.deleteFile(filePathAudio);
-        }
+        await Promise.all([transaction.rollback(), awsService.deleteFolder(`PBL6/SONG/${songId}`)]);
+        // await transaction.rollback();
+        // await awsService.deleteFolder(`PBL6/SONG/${songId}`);
         throw error;
     }
 };
@@ -616,7 +688,7 @@ const updateArtistService = async ({ artistId, data, file } = {}) => {
     }
 };
 
-const updateSongService = async ({ songId, data, duration, file } = {}) => {
+const updateSongService = async ({ songId, data, duration, file, lyric } = {}) => {
     const transaction = await db.sequelize.transaction();
     try {
         const subArtistIds = data.subArtist ?? [];
@@ -661,8 +733,23 @@ const updateSongService = async ({ songId, data, duration, file } = {}) => {
         if (file) {
             await awsService.copyFolder(`PBL6/SONG/${songId}`, `PBL6/COPY/SONG/${songId}`);
             await awsService.deleteFolder(`PBL6/SONG/${songId}`);
-            const path = await awsService.uploadSong('', songId, file);
-            await db.Song.update({ filePathAudio: path }, { where: { id: songId } });
+            if (lyric) {
+                const result = await awsService.uploadSongWithLyric(songId, file, lyric);
+                await db.Song.update(
+                    { filePathAudio: result.filePathAudio, lyric: result.filePathLyric },
+                    { where: { id: songId } },
+                );
+            } else {
+                const path = await awsService.uploadSong(songId, file);
+                await db.Song.update({ filePathAudio: path, lyric: null }, { where: { id: songId } });
+            }
+        } else {
+            if (lyric) {
+                await awsService.copyFolder(`PBL6/LYRIC/${songId}`, `PBL6/COPY/LYRIC/${songId}`);
+                await awsService.deleteFolder(`PBL6/LYRIC/${songId}`);
+                const path = await awsService.uploadLyricFile(songId, lyric);
+                await db.Song.update({ lyric: path }, { where: { id: songId } });
+            }
         }
         await transaction.commit();
         await awsService.deleteFolder(`PBL6/COPY/SONG/${songId}`);
@@ -677,6 +764,9 @@ const updateSongService = async ({ songId, data, duration, file } = {}) => {
         if (file) {
             await awsService.copyFolder(`PBL6/COPY/SONG/${songId}/`, `PBL6/SONG/${songId}/`);
             await awsService.deleteFolder(`PBL6/COPY/SONG/${songId}`);
+        } else if (!file && lyric) {
+            await awsService.copyFolder(`PBL6/COPY/LYRIC/${songId}/`, `PBL6/LYRIC/${songId}/`);
+            await awsService.deleteFolder(`PBL6/COPY/LYRIC/${songId}`);
         }
         throw error;
     }
@@ -737,6 +827,9 @@ export const adminService = {
     getAllAlbumService,
     getAllArtistNameService,
     getAllUserService,
+    getAllReportService,
+    getReportService,
+    verifyReportService,
     // ------------create
     createSongService,
     createAlbum,

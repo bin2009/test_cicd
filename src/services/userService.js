@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { StatusCodes } from 'http-status-codes';
 import { artistService } from './artistService';
 import { awsService } from './awsService';
+import formatTime from '~/utils/timeFormat';
 
 const saltRounds = 10;
 
@@ -51,7 +52,13 @@ const fetchUser = async ({ conditions = {}, limit, offset, order = [['createdAt'
         offset: offset,
         subQuery: false,
     });
-    return users;
+
+    const formatters = users.map((u) => {
+        const formatter = { ...u.toJSON() };
+        formatter.createdAt = formatTime(formatter.createdAt);
+        return formatter;
+    });
+    return formatters;
 };
 
 const fetchUserCount = async ({ conditions = {} } = {}) => {
@@ -184,7 +191,6 @@ const getSongOfPlaylistService = async ({ playlistId, user } = {}) => {
         });
         if (!checkOwner)
             throw new ApiError(StatusCodes.FORBIDDEN, 'You do not have permission to access this playlist.');
-        console.log(playlistId);
         const songIds = await playlistService.fetchAllSongIdsFromPlaylist({
             conditions: { playlistId: playlistId },
         });
@@ -396,6 +402,20 @@ const commentService = async ({ data, user } = {}) => {
     }
 };
 
+const reportCommentService = async ({ data, user } = {}) => {
+    try {
+        const report = await db.Report.create({
+            userId: user.id,
+            commentId: data.commentId,
+            content: data.content,
+            status: false,
+        });
+        return report;
+    } catch (error) {
+        throw error;
+    }
+};
+
 const getRecentUserService = async ({ page = 1, limit = 10 } = {}) => {
     try {
         const offset = (page - 1) * limit;
@@ -414,6 +434,7 @@ const getRecentUserService = async ({ page = 1, limit = 10 } = {}) => {
 };
 
 const registerService = async (data) => {
+    const transaction = await db.sequelize.transaction();
     try {
         const hashPass = await bcrypt.hash(data.password, saltRounds);
         data.password = hashPass;
@@ -421,16 +442,83 @@ const registerService = async (data) => {
         data.statusPassword = false;
         data.accountType = 'Free';
         data.status = true;
-        const newUser = await db.User.create(data);
-        return {
-            errCode: 0,
-            errMess: 'User created successfully',
-        };
+        const newUser = await db.User.create(data, { transaction });
+        await db.Playlist.create(
+            {
+                userId: newUser.id,
+                title: 'Yêu thích',
+                description: 'Các bài nhạc đã thích.',
+            },
+            { transaction },
+        );
+        await transaction.commit();
     } catch (error) {
-        return {
-            errCode: 8,
-            errMess: `User creation failed: ${error.message}`,
-        };
+        await transaction.rollback();
+    }
+};
+
+const userUploadSongService = async ({ user, title, file, duration, lyric } = {}) => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        const id = uuidv4();
+
+        let filePathAudio = null;
+        if (file) {
+            filePathAudio = await awsService.userUploadSong(id, file);
+        }
+        // if (lyric) {
+        // lyric = await
+        // }
+        await db.PersonalSong.create(
+            {
+                id: id,
+                userId: user.id,
+                title: title,
+                duration: duration * 1000,
+                filePathAudio: filePathAudio,
+                lyric: null,
+            },
+            { transaction },
+        );
+        await transaction.commit();
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
+    }
+};
+
+const updateAccountType = async () => {
+    const transaction = await db.sequelize.transaction();
+    try {
+        const currentDate = new Date().getTime();
+        const expiredBills = await db.Subscriptions.findAll({
+            where: {
+                endDate: { [Op.lt]: currentDate },
+                statusUse: true,
+            },
+            raw: true,
+        });
+        if (expiredBills.length > 0) {
+            await Promise.all([
+                db.User.update(
+                    { accountType: 'Free' },
+                    { where: { id: expiredBills.map((b) => b.userId) } },
+                    { transaction },
+                ),
+                db.Subscriptions.update(
+                    { statusUse: false },
+                    { where: { id: { [Op.in]: expiredBills.map((b) => b.id) } } },
+                    { transaction },
+                ),
+            ]);
+            console.log(`Updated account types to Free for users: ${expiredBills.map((b) => b.userId)}`);
+        } else {
+            console.log('No expired accounts found.');
+        }
+        await transaction.commit();
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
     }
 };
 
@@ -453,6 +541,7 @@ export const userService = {
     likedSongService,
     followedArtistService,
     commentService,
+    reportCommentService,
     // ---------------------
     postFollowService,
     // -----------------
@@ -460,4 +549,7 @@ export const userService = {
 
     // -----------------..
     registerService,
+    userUploadSongService,
+    // ---------------cron job
+    updateAccountType,
 };

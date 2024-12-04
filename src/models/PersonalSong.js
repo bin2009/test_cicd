@@ -1,7 +1,7 @@
 'use strict';
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
-    class Subscriptions extends Model {
+    class PersonalSong extends Model {
         /**
          * Helper method for defining associations.
          * This method is not a part of Sequelize lifecycle.
@@ -9,9 +9,10 @@ module.exports = (sequelize, DataTypes) => {
          */
         static associate(models) {
             // define association here
+            // PersonalSong.belongsTo(models.Album, { foreignKey: 'albumId', as: 'album' });
         }
     }
-    Subscriptions.init(
+    PersonalSong.init(
         {
             id: {
                 type: DataTypes.UUID,
@@ -26,36 +27,27 @@ module.exports = (sequelize, DataTypes) => {
                 },
                 allowNull: false,
             },
-            packageId: {
-                type: DataTypes.UUID,
-                references: {
-                    model: 'SubscriptionPackage',
-                    key: 'id',
-                },
+            title: {
+                type: DataTypes.STRING,
                 allowNull: false,
             },
-            startDate: {
-                type: DataTypes.DATE,
+            duration: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+            },
+            filePathAudio: {
+                type: DataTypes.STRING,
                 allowNull: false,
             },
-            endDate: {
-                type: DataTypes.DATE,
-                allowNull: false,
-            },
-            status: {
-                type: DataTypes.ENUM('Pending', 'Expired', 'Paid', 'Cancelled'),
-                allowNull: false,
-            },
-            statusUse: {
-                type: DataTypes.BOOLEAN,
-                allowNull: false,
-                defaultValue: false,
+            lyric: {
+                type: DataTypes.TEXT,
+                allowNull: true,
             },
         },
         {
             sequelize,
-            modelName: 'Subscriptions',
+            modelName: 'PersonalSong',
         },
     );
-    return Subscriptions;
+    return PersonalSong;
 };

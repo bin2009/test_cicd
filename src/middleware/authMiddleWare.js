@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import db from '~/models';
 import { StatusCodes } from 'http-status-codes';
+import ApiError from '~/utils/ApiError';
 
 // const jwt = require('jsonwebtoken');
 // const db = require('../models');
@@ -8,87 +9,82 @@ import { StatusCodes } from 'http-status-codes';
 // const emailController = require('../controllers/emailController');
 
 const verifyToken = (req, res, next) => {
-    const token = req.headers['authorization'];
-
-    if (token) {
-        const accessToken = token.split(' ')[1];
-        jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
-            if (err) {
-                return res.status(StatusCodes.FORBIDDEN).json({
-                    status: 'error',
-                    message: 'Access denied',
-                });
-            }
-            req.user = user;
-            next();
-        });
-    } else {
-        return res.status(StatusCodes.UNAUTHORIZED).json({
-            status: 'error',
-            message: "You're not authenticated",
-        });
+    try {
+        const token = req.headers['authorization'];
+        if (!token) {
+            throw new ApiError(StatusCodes.BAD_REQUEST, 'Token is required');
+        } else {
+            const accessToken = token.split(' ')[1];
+            jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+                if (err) {
+                    throw new ApiError(StatusCodes.FORBIDDEN, err.message);
+                }
+                req.user = user;
+                next();
+            });
+        }
+    } catch (error) {
+        next(error);
     }
 };
 
 const verifyTokenAndAdmin = (req, res, next) => {
-    verifyToken(req, res, () => {
-        if (req.user.role === 'Admin') {
-            next();
-        } else {
-            return res.status(StatusCodes.FORBIDDEN).json({
-                status: 'error',
-                message: "You're not allowed",
-            });
-        }
-    });
+    try {
+        verifyToken(req, res, () => {
+            if (req.user && req.user.role === 'Admin') {
+                next();
+            } else {
+                throw new ApiError(StatusCodes.FORBIDDEN, "You're not allowed");
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
 const verifyTokenAndAuthorization = (req, res, next) => {
-    verifyToken(req, res, () => {
-        if (req.user.id == req.params.id || req.user.role === 'Admin') {
-            next();
-        } else {
-            return res.status(StatusCodes.FORBIDDEN).json({
-                status: 'error',
-                message: "You're not allowed",
-            });
-        }
-    });
+    try {
+        verifyToken(req, res, () => {
+            if (req.user.id == req.params.id || req.user.role === 'Admin') {
+                next();
+            } else {
+                throw new ApiError(StatusCodes.FORBIDDEN, "You're not allowed");
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
 const optionalVerifyToken = async (req, res, next) => {
-    const token = req.headers['authorization'];
-
-    if (token) {
-        const accessToken = token.split(' ')[1];
-        jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
-            if (err) {
-                return res.status(StatusCodes.FORBIDDEN).json({
-                    status: 'error',
-                    message: 'Token is not valid',
-                });
-            }
-            req.user = user;
-        });
-    }
-    next();
-};
-const checkEmailExits = async (req, res, next) => {
     try {
-        const { email } = req.body;
-        const user = await db.User.findOne({ where: { email: email } });
-        if (user) {
-            return res.status(400).json({
-                errCode: 3,
-                errMess: 'Email already exists',
+        const token = req.headers['authorization'];
+        if (!token) {
+            next();
+        } else {
+            const accessToken = token.split(' ')[1];
+            jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+                if (err) {
+                    throw new ApiError(StatusCodes.FORBIDDEN, err.message);
+                }
+                req.user = user;
             });
         }
+    } catch (error) {
+        next(error);
+    }
+};
+
+const checkEmailAndUsernameExits = async (req, res, next) => {
+    try {
+        const { email, username } = req.body;
+        const checkEmail = await db.User.findOne({ where: { email: email } });
+        if (checkEmail) throw new ApiError(StatusCodes.CONFLICT, 'Email already exists');
+        const checkUsername = await db.User.findOne({ where: { username: username } });
+        if (checkUsername) throw new ApiError(StatusCodes.CONFLICT, 'Username already exists');
         next();
     } catch (error) {
-        return res.status(500).json({
-            errCode: 8,
-            errMess: `Internal Server Error: ${error.message}`,
-        });
+        next(error);
     }
 };
 
@@ -97,13 +93,5 @@ export const authMiddleWare = {
     verifyTokenAndAdmin,
     verifyTokenAndAuthorization,
     optionalVerifyToken,
-    checkEmailExits,
+    checkEmailAndUsernameExits,
 };
-
-// module.exports = {
-//     verifyToken,
-//     verifyTokenAndAdmin,
-//     verifyTokenUserOrAdmin,
-//     checkEmailExits,
-//     optionalVerifyToken,
-// };

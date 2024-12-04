@@ -238,7 +238,7 @@ const followedArtist = async (req, res, next) => {
 
 const comment = async (req, res, next) => {
     try {
-        const comment = await userService.commentService({ data: req.body, user: req.user });
+        const comment = await userService.getCommentService({ data: req.body, user: req.user });
         res.status(StatusCodes.OK).json({
             status: 'success',
             message: 'Comment successfully',
@@ -249,18 +249,56 @@ const comment = async (req, res, next) => {
     }
 };
 
-const register = async (req, res) => {
-    const data = req.body;
-    const checkVerify = await emailController.verifyEmailOtp(data.email, data.otp);
-    if (checkVerify) {
-        delete data.otp;
-        const response = await userService.registerService(data);
-        return res.status(statusCodes[response.errCode]).json(response);
-    } else {
-        return res.status(409).json({
-            errCode: 7,
-            errMess: 'OTP is invalid or expired',
+const reportComment = async (req, res, next) => {
+    try {
+        const report = await userService.reportCommentService({ data: req.body, user: req.user });
+        res.status(StatusCodes.OK).json({
+            status: 'success',
+            message: 'Report comment successfully',
+            report: report,
         });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const register = async (req, res, next) => {
+    try {
+        const data = req.body;
+        const checkVerify = await emailController.verifyEmailOtp(data.email, data.otp);
+        if (checkVerify) {
+            delete data.otp;
+            await userService.registerService(data);
+            res.status(StatusCodes.OK).json({
+                status: 'success',
+                message: 'User created successfully',
+            });
+        } else {
+            throw new ApiError(StatusCodes.CONFLICT, 'OTP is invalid or expired');
+        }
+    } catch (error) {
+        next(error);
+    }
+};
+
+const userUploadSong = async (req, res, next) => {
+    try {
+        const lyricFile = req.files.lyricFile ? req.files.lyricFile[0] : null;
+        const audioFile = req.files.audioFile ? req.files.audioFile[0] : null;
+
+        await userService.userUploadSongService({
+            user: req.user,
+            title: req.body.title,
+            file: audioFile,
+            duration: req.duration,
+            lyric: lyricFile,
+        });
+        res.status(StatusCodes.OK).json({
+            status: 'success',
+            message: 'Upload song success',
+        });
+    } catch (error) {
+        next(error);
     }
 };
 
@@ -280,7 +318,10 @@ export const userController = {
     likedSong,
     followedArtist,
     comment,
+    reportComment,
 
     // -------- ....
     register,
+    // -----------
+    userUploadSong,
 };
