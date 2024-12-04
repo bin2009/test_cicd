@@ -29,11 +29,8 @@ jobs:
                   script: |
                       cd /root/demo/test_cicd  
                       git pull origin main 
-                      npm run build
-                      cp package.json /root/build/
-                      cp .env /root/build/
-                      cd /root/build
                       npm install
+                      npm run build
                       pm2 stop all
                       pm2 delete all
-                      pm2 start /root/build/src/server.js
+                      pm2 start /root/demo/test_cicd/build/src/server.js
